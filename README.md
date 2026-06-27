@@ -1,3 +1,5 @@
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-talent-platform.streamlit.app/)
+
 # 🤖 AI Talent Intelligence Platform
 
 Enterprise-grade Streamlit dashboard for analysing global AI job market dynamics.
