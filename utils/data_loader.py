@@ -23,17 +23,52 @@ logger = get_logger(__name__)
 
 @st.cache_data(show_spinner="Loading dataset …", ttl=3600)
 def load_data(filepath: Optional[str | Path] = None) -> pd.DataFrame:
-    path = Path(filepath) if filepath else config.DATA_FILE
-    if not path.exists():
+    """
+    Load the AI Jobs dataset. Prefers parquet (fast + small), falls back to xlsx.
+    Returns memory-optimised DataFrame with categoricals and truncated descriptions.
+    """
+    parquet_path = config.DATA_DIR / "ai_jobs.parquet"
+    xlsx_path    = Path(filepath) if filepath else config.DATA_FILE
+
+    if parquet_path.exists():
+        logger.info("Reading dataset from %s", parquet_path)
+        df = pd.read_parquet(parquet_path)
+    elif xlsx_path.exists():
+        logger.info("Reading dataset from %s", xlsx_path)
+        df = pd.read_excel(xlsx_path, sheet_name=config.SHEET_NAME, engine="openpyxl")
+        # Truncate descriptions to keep memory in check
+        if config.COL_DESCRIPTION in df.columns:
+            df[config.COL_DESCRIPTION] = (
+                df[config.COL_DESCRIPTION].fillna("").astype(str).str.slice(0, 800)
+            )
+    else:
         raise FileNotFoundError(
-            f"Dataset not found at '{path}'.\n"
-            "Place 'Artificial_Intelligence_Master_Enriched.xlsx' in the /data folder."
+            f"Dataset not found at '{parquet_path}' or '{xlsx_path}'.\n"
+            "Place 'ai_jobs.parquet' or 'Artificial_Intelligence_Master_Enriched.xlsx' "
+            "in the /data folder."
         )
-    logger.info("Reading dataset from %s", path)
-    df = pd.read_excel(path, sheet_name=config.SHEET_NAME, engine="openpyxl")
+
     logger.info("Raw shape: %s rows × %s cols", *df.shape)
     df = _enrich(df)
-    logger.info("Enriched shape: %s rows × %s cols", *df.shape)
+    df = _optimise_memory(df)
+    logger.info("Enriched shape: %s rows × %s cols (%.1f MB)",
+                df.shape[0], df.shape[1],
+                df.memory_usage(deep=True).sum() / 1024 / 1024)
+    return df
+
+
+def _optimise_memory(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert low-cardinality columns to categorical to save memory."""
+    cat_cols = [
+        config.COL_COUNTRY, config.COL_CURRENCY, config.COL_EMP_TYPE,
+        config.COL_EXP_LEVEL, config.COL_SENIORITY, config.COL_REMOTE,
+        config.COL_CONFIDENCE, config.COL_EMP_NORM,
+        "Primary AI Domain", "Domain Source", "Region", config.COL_POSTED_MONTH,
+        config.COL_POSTED_WEEK,
+    ]
+    for col in cat_cols:
+        if col in df.columns and df[col].dtype == "object":
+            df[col] = df[col].astype("category")
     return df
 
 
@@ -90,6 +125,7 @@ def _add_salary_usd(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip whitespace from object columns (skips already-categorical ones)."""
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].str.strip()
     return df
